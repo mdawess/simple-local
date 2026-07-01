@@ -1,0 +1,15 @@
+# Define the model / resources in a yml config
+
+model_name: Qwen-2.5-3B
+resources:
+  accelerator: L4 # omit
+  use_gpu: false # Currently unsupported
+trt_llm: # TensorRT-LLM for optimized inference. based on https://github.com/basetenlabs/truss
+  build:
+    base_model: decoder
+    checkpoint_repository:
+      source: HF # hugging face will likely be the only source for now
+      repo: "Qwen/Qwen2.5-3B-Instruct"
+    max_seq_len: 8192
+    quantization_type: fp8
+    tensor_parallel_count: 1

@@ -1,0 +1,10 @@
+# Binaries
+/simple-local
+/bin/
+
+# Downloaded models
+/models/
+
+# Go
+*.test
+*.out
