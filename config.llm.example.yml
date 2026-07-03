@@ -1,0 +1,13 @@
+kind: llm
+model_name: Qwen-2.5-3B
+source:
+  provider: huggingface
+  repo: Qwen/Qwen2.5-3B-Instruct-GGUF
+  file: qwen2.5-3b-instruct-q4_k_m.gguf
+inference:
+  context_length: 8192
+  threads: 0
+server:
+  host: localhost
+  port: 8081
+  api_key: ${SIMPLE_LOCAL_API_KEY}

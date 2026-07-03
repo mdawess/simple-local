@@ -1,0 +1,16 @@
+kind: predictor
+model_name: churn-gb # The name is informational for predictors (the /predict endpoint is fixed).
+source:
+  provider: local
+  file: ./models/churn_gb.joblib
+predictor:
+  task: classification # regression | classification (classification adds probabilities)
+  schema:
+    features:
+      - { name: age, type: float }
+      - { name: income, type: float }
+      - { name: region, type: int }
+server:
+  host: localhost
+  port: 8081
+  api_key: ${SIMPLE_LOCAL_API_KEY}
