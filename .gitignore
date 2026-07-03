@@ -1,10 +1,25 @@
-# Binaries
-/simple-local
-/bin/
-
-# Downloaded models
+# Local config & downloaded/served models
+/config.yml
 /models/
 
-# Go
-*.test
-*.out
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Environment
+*.env
+
+# Call logs (contain phone numbers + conversation content)
+examples/sdr/transcripts/*
+!examples/sdr/transcripts/.gitkeep
+
+# Trained model artifact (regenerate with train.py)
+examples/regression/model.joblib
+
+# Fine-tune artifacts (regenerate with finetune.sh)
+examples/finetune/data/
+examples/finetune/adapters/
+examples/finetune/merged/
+examples/finetune/*.gguf
