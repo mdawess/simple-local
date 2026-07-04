@@ -16,6 +16,7 @@ BASE = "/environments/{env}/sync/v1"
 
 def create_app(cfg: Config, runtime) -> FastAPI:
     app = FastAPI(title="simple-local")
+    app.state.runtime = runtime  # swapped in place by the --watch reloader
 
     def auth(authorization: Optional[str] = Header(None)) -> None:
         if not cfg.server.api_key:
@@ -59,6 +60,7 @@ def _mount_llm(app: FastAPI, runtime: LLMRuntime, auth) -> None:
 def _mount_predictor(app: FastAPI, runtime: PredictorRuntime, auth) -> None:
     @app.post(BASE + "/predict", dependencies=[Depends(auth)])
     async def predict(env: str, request: Request):
+        runtime = request.app.state.runtime  # live runtime; may be hot-swapped
         body = await request.json()
         inputs = body.get("inputs")
         if not isinstance(inputs, list):
