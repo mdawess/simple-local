@@ -1,12 +1,36 @@
-kind: llm
-model_name: Qwen-2.5-3B
-source:
-  provider: huggingface
-  repo: Qwen/Qwen2.5-3B-Instruct-GGUF
-  file: qwen2.5-3b-instruct-q4_k_m.gguf
-inference:
-  context_length: 8192
-  threads: 0
+# Serve one or more models; route with the request's `model` field.
+models:
+  - name: Qwen-2.5-3B
+    kind: llm
+    source:
+      provider: huggingface
+      repo: Qwen/Qwen2.5-3B-Instruct-GGUF
+      file: qwen2.5-3b-instruct-q4_k_m.gguf
+    # Fine-tune adapters over this base model, each served under its own name.
+    # Requests for the base name run with all adapters disabled.
+    # adapters:
+    #   - name: Qwen-2.5-3B-sql
+    #     source: { provider: local, file: ~/adapters/sql-lora.gguf }
+    #     scale: 1.0
+    # Match the template your fine-tune was trained with (one of the two):
+    # chat_template: chatml            # built-in llama.cpp template name
+    # chat_template_file: ./sql.jinja  # custom jinja template
+    inference:
+      context_length: 8192
+      threads: 0        # 0 = all cores
+      parallel: 1       # >1 enables concurrent request slots (continuous batching)
+      # cache_type_k: q8_0   # quantize KV cache to fit longer contexts
+      # cache_type_v: q8_0
+      # mlock: true
+      # draft:               # speculative decoding with a small draft model
+      #   source:
+      #     provider: huggingface
+      #     repo: Qwen/Qwen2.5-0.5B-Instruct-GGUF
+      #     file: qwen2.5-0.5b-instruct-q4_k_m.gguf
+      #   max: 16
+      #   min: 1
+      # extra_args: ["--flash-attn", "on"]   # anything else, passed verbatim
+
 server:
   host: localhost
   port: 8081

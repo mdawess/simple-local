@@ -12,6 +12,9 @@ dependencies = [
     "joblib",
     "scikit-learn",
     "numpy",
+    "requests>=2.34.2",
+    "pydantic>=2.13.4",
+    "boto3>=1.43.62",
 ]
 
 [project.scripts]
@@ -23,3 +26,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["simple_local"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

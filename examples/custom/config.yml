@@ -1,0 +1,19 @@
+models:
+  - name: cost-ensemble
+    kind: custom
+    runtime: examples/custom/runtime.py:DemoEnsemble
+    # No source: this demo has no artifact. A real one would pull its fitted
+    # estimators from a versioned S3 prefix:
+    # source:
+    #   provider: s3
+    #   bucket: my-models
+    #   prefix: acme/models
+    #   version: active   # resolved via {prefix}/active.json; or "latest", or "1.5"
+    config:
+      rate_per_kva: { default: 40.0, CAHP: 38.5, USHP: 42.0 }
+      phase_multiplier: { 1ph: 1.0, 3ph: 1.35 }
+
+server:
+  host: localhost
+  port: 8081
+  api_key: ${SIMPLE_LOCAL_API_KEY}

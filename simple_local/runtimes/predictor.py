@@ -5,19 +5,19 @@ import joblib
 import numpy as np
 from pydantic import ValidationError, create_model
 
-from ..config import Config
+from ..config import ModelSpec
 
 TYPES = {"float": float, "int": int, "bool": bool, "str": str}
 
 
 class PredictorRuntime:
-    def __init__(self, cfg: Config, model_path: Path):
+    def __init__(self, spec: ModelSpec, model_path: Path):
         self.model = joblib.load(model_path)
-        self.task = cfg.predictor.task
+        self.task = spec.predictor.task
 
         self.features: list[str] | None = None
         self._row_model = None
-        schema = cfg.predictor.input_schema
+        schema = spec.predictor.input_schema
         if schema and schema.features:
             self.features = [f.name for f in schema.features]
             fields = {f.name: (TYPES[f.type], ...) for f in schema.features}
@@ -35,7 +35,10 @@ class PredictorRuntime:
             return np.array(rows)
         return np.array(inputs)
 
-    def predict(self, inputs: list) -> dict[str, Any]:
+    def predict(self, request: dict) -> dict[str, Any]:
+        inputs = request.get("inputs")
+        if not isinstance(inputs, list):
+            raise ValueError("body must contain an 'inputs' list")
         X = self._matrix(inputs)
         result: dict[str, Any] = {"predictions": self.model.predict(X).tolist()}
         if self.task == "classification" and hasattr(self.model, "predict_proba"):
