@@ -1,0 +1,14 @@
+models:
+  - name: Qwen3.6-27B
+    kind: llm
+    source:
+      provider: huggingface
+      repo: unsloth/Qwen3.6-27B-GGUF
+      file: Qwen3.6-27B-Q4_K_M.gguf
+    inference:
+      context_length: 8192
+
+server:
+  host: localhost
+  port: 8085
+  api_key: ${SIMPLE_LOCAL_API_KEY}
