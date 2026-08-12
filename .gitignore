@@ -23,3 +23,7 @@ examples/finetune/data/
 examples/finetune/adapters/
 examples/finetune/merged/
 examples/finetune/*.gguf
+
+# Contact lists + verification outputs (PII)
+examples/sdr/inputs/*
+!examples/sdr/inputs/.gitkeep
