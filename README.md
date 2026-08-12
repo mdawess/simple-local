@@ -1,17 +1,10 @@
 # Simple Local
 
-A small local inference server for fine-tuned small models, CPU-friendly.
+A small local inference server for small models, CPU-friendly. Once llama.cpp is installed, any open source
+model can by served via the yml config. Also supports traditional ml models (e.g. regression, classification)
+and remote runtimes (e.g. Modal or Azure).
 
-One YAML config, one server, any number of models:
-
-- **`llm`**: GGUF language models via llama.cpp, exposed as an OpenAI-compatible chat endpoint (streaming supported). Serve LoRA fine-tune adapters on top of a shared base model, each under its own model name.
-- **`predictor`**: scikit-learn / xgboost / lightgbm models saved as `.joblib`, exposed as a simple `/predict` endpoint.
-- **`custom`**: your own Python runtime class behind the same server — arbitrary JSON in/out on `/predict`, streamed NDJSON for batches. See `examples/custom/`.
-
-Model artifacts can come from Hugging Face, local files, or S3 — including a
-versioned S3 layout (`{prefix}/{version}/…`) with `version: latest`, an explicit
-version, or `active` resolved through a `{prefix}/active.json` pointer for
-deploy-free rollbacks. `POST /v1/reload` (optionally `{"model": "name"}`)
+Model artifacts can come from Hugging Face, local files, or S3 (no Azure blob yet) including a versioned S3 layout (`{prefix}/{version}/…`) with `version: latest`, an explicit version, or `active` resolved through a `{prefix}/active.json` pointer for deploy-free rollbacks. `POST /v1/reload` (optionally `{"model": "name"}`)
 re-resolves sources and swaps models blue/green without a restart.
 
 ## Credits
@@ -26,28 +19,16 @@ Inspired by https://github.com/basetenlabs/truss
 ## Setup
 
 ```bash
-cp config.llm.example.yml config.yml           # LLM, or use config.predictor.example.yml
-export SIMPLE_LOCAL_API_KEY=$(openssl rand -hex 16)
+cp examples/chat/config.yml config.yml
+cp .env.example .env # then fill in SIMPLE_LOCAL_API_KEY
 ```
-Note that the contents of the API key are irrelevant, it is just to comply with
-openai's api.
-
-The config file is the interface: models, sources, and server settings all live
-there. `models:` is a list — mix llms and predictors in one server and route by
-the `model` field in the request.
+`make serve` and `make run` load `.env` automatically; it also holds optional HF and AWS credentials for huggingface/s3 model sources. Note that the contents of the API key are irrelevant, it is just to comply with openai's api.
 
 ## Running
 
 ```bash
 make serve      # Will download the models if not already on first run
 ```
-Point at a different config with `-c path/to/config.yml`. Add `--watch` to
-hot-reload models when the config or a model artifact changes — llm swaps are
-blue/green (the new llama-server is health-checked before the old one stops),
-and a broken artifact or config never takes down the currently serving model.
-
-If a llama-server subprocess crashes, it is restarted automatically with
-backoff; requests for that model return 503 until it recovers.
 
 ## Usage - LLM (`kind: llm`)
 
@@ -71,47 +52,11 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-The `api_key` must match `server.api_key` in your config. Pass `stream=True` for
-token streaming. The OpenAI client always requires *some* key; if you leave
-`server.api_key` empty, auth is disabled and any placeholder value works.
-
-The old `/environments/{env}/sync/v1` base path still works as an alias for `/v1`.
-
-### Fine-tune adapters
-
-Point `adapters:` at LoRA GGUFs (convert PEFT output with llama.cpp's
-`convert_lora_to_gguf.py`). Each adapter is served under its own model name on
-the shared base-model process, so switching between the base and any adapter is
-per-request and free:
-
-```yaml
-models:
-  - name: Qwen-2.5-3B
-    source: { provider: huggingface, repo: Qwen/Qwen2.5-3B-Instruct-GGUF, file: qwen2.5-3b-instruct-q4_k_m.gguf }
-    adapters:
-      - name: Qwen-2.5-3B-sql
-        source: { provider: local, file: ~/adapters/sql-lora.gguf }
-        scale: 1.0
-```
-
-Requests for `Qwen-2.5-3B` run with adapters disabled; requests for
-`Qwen-2.5-3B-sql` apply the adapter at its configured scale. `GET /v1/models`
-lists everything that's servable.
-
-### Chat templates
-
-Serving-time chat templates must match what the fine-tune was trained with, or
-quality quietly degrades. Set `chat_template:` (a built-in llama.cpp template
-name) or `chat_template_file:` (a jinja file). The resolved template source is
-logged at startup; if neither is set, the model's embedded default is used.
+The `api_key` must match `server.api_key` in your config. Pass `stream=True` for token streaming. The OpenAI client always requires *some* key; if you leave `server.api_key` empty, auth is disabled and any placeholder value works.
 
 ### Embeddings
 
-Set `embeddings: true` on an llm model to serve it on the OpenAI-compatible
-`/v1/embeddings` endpoint instead of chat (llama.cpp runs the two modes with
-different pooling, so an embedding model is its own `models:` entry and
-process). GGUF conversions exist for most sentence-transformer models
-(all-MiniLM, bge, nomic-embed, ...):
+Set `embeddings: true` on an llm model to serve it on the OpenAI-compatible `/v1/embeddings` endpoint instead of chat (llama.cpp runs the two modes with different pooling, so an embedding model is its own `models:` entry and process). GGUF conversions exist for most sentence-transformer models (all-MiniLM, bge, nomic-embed, ...):
 
 ```yaml
 models:
@@ -128,23 +73,30 @@ models:
 client.embeddings.create(model="minilm-l6", input=["machine learning", "deep learning"])
 ```
 
-Pass pooling overrides via `extra_args: ["--pooling", "mean"]` if a model needs
-them. For a PyTorch sentence-transformers model that has no GGUF, wrap it in a
-`kind: custom` runtime instead.
+### Offloading a model (`kind: remote`)
 
-### Performance
+I pushed my macbook to far and didn't like the tok/s so added this less local config. It splits the runtimes
+allowing big models to run on a remote GPU while the small, latency-sensitive ones stay local (e.g. embedding models), but all called from the same local endpoint (e.g. `http://localhost:8000/v1`)
 
-Under `inference:`: `parallel` (concurrent slots with continuous batching),
-`cache_type_k`/`cache_type_v` (KV-cache quantization), `mlock`, `no_mmap`,
-`draft:` (speculative decoding with a small draft model), and `extra_args` for
-anything else llama-server accepts (e.g. `["--flash-attn", "on"]`).
+```yaml
+models:
+  - name: Qwen3-Embedding-0.6B     # local: small, hot, instant
+    kind: llm
+    embeddings: true
+    source: { provider: huggingface, repo: Qwen/Qwen3-Embedding-0.6B-GGUF, file: Qwen3-Embedding-0.6B-Q8_0.gguf }
 
-### Observability
+  - name: Qwen3.6-27B              # offloaded: no heat, no battery drain
+    kind: remote
+    remote:
+      url: https://<workspace>--llm.modal.run/v1
+      api_key: ${MODAL_PROXY_KEY}   # bearer token sent upstream
+      # model: qwen3.6-27b-awq      # if the upstream name differs
+      timeout: 300
+```
 
-- `GET /health` — per-model status; 503 while any llama-server is restarting
-- `GET /v1/metrics` — llama-server's Prometheus metrics (TTFT, tokens/sec, slot
-  usage); pass `?model=` when serving multiple llms
-- One log line per request: model, status, duration, prompt/completion tokens
+Add `embeddings: true` to route a remote to `/v1/embeddings` instead of chat.
+`/health` reports remotes as `remote` (reachability is proven per request, not
+by a supervisor) and an unreachable one returns 503 rather than hanging.
 
 ## Usage - predictor (`kind: predictor`)
 
@@ -175,9 +127,3 @@ curl http://localhost:8081/v1/predict \
 
 `probabilities` is included when `predictor.task: classification` and the model
 supports `predict_proba`.
-
-## Tests
-
-```bash
-uv run pytest
-```
