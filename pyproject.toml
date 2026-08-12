@@ -15,10 +15,24 @@ dependencies = [
     "requests>=2.34.2",
     "pydantic>=2.13.4",
     "boto3>=1.43.62",
+    "pymysql>=1.2.0",
+    "openai>=2.53.0",
+    "modal>=1.5.3",
 ]
 
 [project.scripts]
 simple-local = "simple_local.cli:main"
+
+[project.optional-dependencies]
+vl = [
+    "accelerate>=1.14.0",
+    "pillow>=12.3.0",
+    "qwen-vl-utils>=0.0.14",
+    "sentence-transformers>=5.6.1",
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "transformers>=5.14.1",
+]
 
 [build-system]
 requires = ["hatchling"]
