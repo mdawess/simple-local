@@ -1,0 +1,23 @@
+models:
+  - name: Qwen3-VL-Embedding-2B
+    kind: custom
+    runtime: implementations/vl-embeddings/runtime.py:VLEmbedder
+    config:
+      model: Qwen/Qwen3-VL-Embedding-2B
+      dtype: ${VL_DTYPE}
+      device: ${VL_DEVICE}
+      batch_size: 8
+
+server:
+  host: ${SIMPLE_LOCAL_HOST}
+  port: ${SIMPLE_LOCAL_PORT}
+  api_key: ${SIMPLE_LOCAL_API_KEY}
+
+logging:
+  mysql:
+    host: ${MYSQL_HOST}
+    port: 3306
+    user: ${MYSQL_USER}
+    password: ${MYSQL_PASSWORD}
+    database: ${MYSQL_DATABASE}
+    ssl: true

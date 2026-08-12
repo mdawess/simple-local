@@ -1,0 +1,16 @@
+models:
+  - name: Qwen3-VL-Embedding-2B
+    kind: custom
+    runtime: implementations/vl-embeddings/runtime.py:VLEmbedder
+    config:
+      model: Qwen/Qwen3-VL-Embedding-2B
+      dtype: bfloat16
+      batch_size: 4
+      # device: mps
+      # dimensions: 512
+      # prompt: "Retrieve relevant documents for the query."
+
+server:
+  host: ${TAILSCAL_HOST_IP:-localhost}
+  port: 8084
+  api_key: ${SIMPLE_LOCAL_API_KEY}

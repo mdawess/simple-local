@@ -1,0 +1,20 @@
+models:
+  - name: Qwen3.6-27B
+    kind: remote
+    remote:
+      url: https://mike-9082--llm.modal.run/v1
+      api_key: ${MODAL_PROXY_KEY}
+      timeout: 300
+
+server:
+  host: ${TAILSCAL_HOST_IP:-localhost}
+  port: 8085
+  api_key: ${SIMPLE_LOCAL_API_KEY}
+
+logging:
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    user: root
+    password: ${MYSQL_PASSWORD}
+    database: simple_local
