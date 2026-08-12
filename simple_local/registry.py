@@ -8,6 +8,7 @@ from .download import ModelPaths, ensure_model_files
 from .runtimes.custom import CustomRuntime
 from .runtimes.llm import LLMRuntime
 from .runtimes.predictor import PredictorRuntime
+from .runtimes.remote import RemoteRuntime
 
 log = logging.getLogger("simple_local.registry")
 
@@ -61,7 +62,7 @@ class Registry:
         self.embedding_targets: dict[str, ChatTarget] = {}
         self.predictors: dict[str, PredictorRuntime] = {}
         for entry in entries.values():
-            if entry.spec.kind == "llm":
+            if entry.spec.kind in ("llm", "remote"):
                 targets = (
                     self.embedding_targets if entry.spec.embeddings else self.chat_targets
                 )
@@ -115,6 +116,9 @@ def _card(
 
 
 def build_entry(spec: ModelSpec) -> ModelEntry:
+    if spec.kind == "remote":
+        runtime = RemoteRuntime(spec)
+        return ModelEntry(spec, ModelPaths(model=None), runtime, {})
     paths = ensure_model_files(spec)
     if spec.kind == "llm":
         runtime = LLMRuntime(spec, paths)
