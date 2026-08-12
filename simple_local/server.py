@@ -8,11 +8,14 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config as config_mod
 from .config import Config
+from .dblog import MySQLLogSink, clip
 from .registry import REBUILD_LOCK, ChatTarget, ModelEntry, Registry, build_entry
 
 log = logging.getLogger("simple_local.requests")
@@ -33,10 +36,13 @@ def create_app(cfg: Config, registry: Registry, config_path: str | None = None) 
         finally:
             await app.state.client.aclose()
             app.state.registry.stop_all()
+            if app.state.db_sink is not None:
+                app.state.db_sink.stop()
 
     app = FastAPI(title="simple-local", lifespan=lifespan)
     app.state.registry = registry  # swapped in place by the --watch reloader
     app.state.client = httpx.AsyncClient(timeout=None)
+    app.state.db_sink = MySQLLogSink(cfg.logging.mysql) if cfg.logging.mysql else None
 
     def auth(authorization: Optional[str] = Header(None)) -> None:
         if not cfg.server.api_key:
@@ -44,6 +50,17 @@ def create_app(cfg: Config, registry: Registry, config_path: str | None = None) 
         token = (authorization or "").removeprefix("Bearer ")
         if not hmac.compare_digest(token, cfg.server.api_key):
             raise HTTPException(status_code=401, detail="invalid api key")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _log_http_error(request: Request, exc: StarletteHTTPException):
+        if exc.status_code >= 400:
+            _record_error(request, exc.status_code, str(exc.detail))
+        return await http_exception_handler(request, exc)
+
+    @app.exception_handler(Exception)
+    async def _log_unhandled_error(request: Request, exc: Exception):
+        _record_error(request, 500, repr(exc))
+        return PlainTextResponse("internal server error", status_code=500)
 
     router = APIRouter(dependencies=[Depends(auth)])
 
@@ -54,11 +71,14 @@ def create_app(cfg: Config, registry: Registry, config_path: str | None = None) 
     @router.post("/chat/completions")
     async def chat_completions(request: Request):
         reg: Registry = request.app.state.registry
+        rec = _new_rec(request, "chat")
         try:
             body = await request.json()
         except Exception:
             raise HTTPException(status_code=400, detail="body must be JSON")
+        rec["request"] = body
         name, target = _resolve_target(reg.chat_targets, body.get("model"), "chat")
+        rec["model"] = name
         if not target.runtime.ready.is_set():
             raise HTTPException(status_code=503, detail=f"model '{name}' is restarting")
         lora = target.lora_payload()
@@ -66,22 +86,28 @@ def create_app(cfg: Config, registry: Registry, config_path: str | None = None) 
             body["lora"] = lora
 
         client: httpx.AsyncClient = request.app.state.client
+        sink = request.app.state.db_sink
+        _apply_upstream_model(target.runtime, body)
         upstream = client.build_request(
-            "POST", target.runtime.base_url + "/v1/chat/completions", json=body
+            "POST",
+            target.runtime.endpoint("chat/completions"),
+            json=body,
+            headers=target.runtime.upstream_headers(),
+            timeout=getattr(target.runtime, "timeout", None),
         )
-        started = time.monotonic()
+        follow = getattr(target.runtime, "follow_redirects", False)
         try:
             if body.get("stream"):
-                resp = await client.send(upstream, stream=True)
+                resp = await client.send(upstream, stream=True, follow_redirects=follow)
                 return StreamingResponse(
-                    _relay_and_log(resp, name, started),
+                    _relay_and_log(resp, sink, rec),
                     status_code=resp.status_code,
                     media_type=resp.headers.get("content-type"),
                 )
-            resp = await client.send(upstream)
+            resp = await client.send(upstream, follow_redirects=follow)
         except httpx.TransportError as e:
             raise HTTPException(status_code=503, detail=f"model '{name}' is unavailable: {e}")
-        _log_request(name, resp.status_code, started, resp.content)
+        _finish_request(sink, rec, resp.status_code, resp.content)
         return Response(
             content=resp.content,
             status_code=resp.status_code,
@@ -91,11 +117,14 @@ def create_app(cfg: Config, registry: Registry, config_path: str | None = None) 
     @router.post("/embeddings")
     async def embeddings(request: Request):
         reg: Registry = request.app.state.registry
+        rec = _new_rec(request, "embeddings")
         try:
             body = await request.json()
         except Exception:
             raise HTTPException(status_code=400, detail="body must be JSON")
+        rec["request"] = body
         name, target = _resolve_target(reg.embedding_targets, body.get("model"), "embedding")
+        rec["model"] = name
         if not target.runtime.ready.is_set():
             raise HTTPException(status_code=503, detail=f"model '{name}' is restarting")
         lora = target.lora_payload()
@@ -103,12 +132,19 @@ def create_app(cfg: Config, registry: Registry, config_path: str | None = None) 
             body["lora"] = lora
 
         client: httpx.AsyncClient = request.app.state.client
-        started = time.monotonic()
+        await _reject_oversized_inputs(client, target.runtime, body.get("input"), name)
+        _apply_upstream_model(target.runtime, body)
         try:
-            resp = await client.post(target.runtime.base_url + "/v1/embeddings", json=body)
+            resp = await client.post(
+                target.runtime.endpoint("embeddings"),
+                json=body,
+                headers=target.runtime.upstream_headers(),
+                timeout=getattr(target.runtime, "timeout", None),
+                follow_redirects=getattr(target.runtime, "follow_redirects", False),
+            )
         except httpx.TransportError as e:
             raise HTTPException(status_code=503, detail=f"model '{name}' is unavailable: {e}")
-        _log_request(name, resp.status_code, started, resp.content)
+        _finish_request(request.app.state.db_sink, rec, resp.status_code, resp.content)
         return Response(
             content=resp.content,
             status_code=resp.status_code,
@@ -118,18 +154,32 @@ def create_app(cfg: Config, registry: Registry, config_path: str | None = None) 
     @router.post("/predict")
     async def predict(request: Request):
         reg: Registry = request.app.state.registry
-        body = await request.json()
-        runtime = _resolve_predictor(reg, body.get("model"))
+        rec = _new_rec(request, "predict")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="body must be JSON")
+        rec["request"] = body
+        name, runtime = _resolve_predictor(reg, body.get("model"))
+        rec["model"] = name
+        sink = request.app.state.db_sink
         try:
             result = await run_in_threadpool(runtime.predict, body)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
         if isinstance(result, dict):
+            _finish_request(sink, rec, 200, json.dumps(result).encode())
             return result
+
         # iterator of rows from a custom runtime: stream as NDJSON
         async def ndjson():
-            async for row in iterate_in_threadpool(iter(result)):
-                yield json.dumps(row) + "\n"
+            rows = 0
+            try:
+                async for row in iterate_in_threadpool(iter(result)):
+                    rows += 1
+                    yield json.dumps(row) + "\n"
+            finally:
+                _finish_request(sink, rec, 200, json.dumps({"rows_streamed": rows}).encode())
 
         return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
@@ -171,9 +221,11 @@ def create_app(cfg: Config, registry: Registry, config_path: str | None = None) 
         for name, entry in reg.entries.items():
             if entry.spec.kind == "llm":
                 statuses[name] = "ready" if entry.runtime.ready.is_set() else "restarting"
+            elif entry.spec.kind == "remote":
+                statuses[name] = "remote"  # reachability is proven per request
             else:
                 statuses[name] = "ready"
-        all_ready = all(s == "ready" for s in statuses.values())
+        all_ready = all(s in ("ready", "remote") for s in statuses.values())
         return JSONResponse(
             {"status": "ok" if all_ready else "degraded", "models": statuses},
             status_code=200 if all_ready else 503,
@@ -253,7 +305,7 @@ def _resolve_predictor(reg: Registry, model):
         raise HTTPException(status_code=404, detail="no predictor models configured")
     if model is None:
         if len(reg.predictors) == 1:
-            return next(iter(reg.predictors.values()))
+            return next(iter(reg.predictors.items()))
         raise HTTPException(
             status_code=422,
             detail=f"specify 'model'; available: {sorted(reg.predictors)}",
@@ -264,10 +316,57 @@ def _resolve_predictor(reg: Registry, model):
             status_code=404,
             detail=f"unknown model '{model}'; available: {sorted(reg.predictors)}",
         )
-    return runtime
+    return model, runtime
 
 
-async def _relay_and_log(resp: httpx.Response, model: str, started: float):
+def _apply_upstream_model(runtime, body: dict) -> None:
+    """A remote may publish the model under a different name than we route by."""
+    upstream = getattr(runtime, "upstream_model", None)
+    if upstream:
+        body["model"] = upstream
+
+
+async def _reject_oversized_inputs(client, runtime, inputs, model: str) -> None:
+    """An embedding input longer than one ubatch hangs and then crashes
+    llama-server, so measure with the model's own tokenizer and refuse first.
+    A token is at least one byte, so only inputs that could possibly be too long
+    are worth a round trip."""
+    limit = getattr(runtime, "token_limit", None)
+    if limit is None or inputs is None:
+        return
+    if isinstance(inputs, (str, dict)):
+        inputs = [inputs]
+    if not isinstance(inputs, list):
+        return
+
+    for index, item in enumerate(inputs):
+        if not isinstance(item, str) or len(item.encode()) <= limit:
+            continue
+        try:
+            resp = await client.post(
+                runtime.base_url + "/tokenize", json={"content": item}
+            )
+            count = len(resp.json()["tokens"])
+        except (httpx.TransportError, KeyError, ValueError):
+            continue  # never fail a request because the pre-check itself broke
+        if count > limit:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"input[{index}] is {count} tokens; model '{model}' accepts at most "
+                    f"{limit} per input. Split the text, or raise inference.ubatch_size "
+                    "(and batch_size) for this model."
+                ),
+            )
+
+
+def _new_rec(request: Request, endpoint: str) -> dict:
+    rec = {"endpoint": endpoint, "model": None, "request": None, "started": time.monotonic()}
+    request.state.dblog = rec
+    return rec
+
+
+async def _relay_and_log(resp: httpx.Response, sink, rec: dict):
     # Keep a tail of the stream so token usage from the final SSE chunk can be logged.
     tail = b""
     try:
@@ -276,17 +375,59 @@ async def _relay_and_log(resp: httpx.Response, model: str, started: float):
             yield chunk
     finally:
         await resp.aclose()
-        _log_request(model, resp.status_code, started, tail)
+        _finish_request(sink, rec, resp.status_code, tail)
 
 
-def _log_request(model: str, status: int, started: float, payload: bytes) -> None:
+def _finish_request(sink, rec: dict, status: int, payload: bytes) -> None:
     prompt = _PROMPT_TOKENS.findall(payload)
     completion = _COMPLETION_TOKENS.findall(payload)
+    prompt_tokens = int(prompt[-1]) if prompt else None
+    completion_tokens = int(completion[-1]) if completion else None
+    duration_ms = int((time.monotonic() - rec["started"]) * 1000)
     log.info(
         "model=%s status=%s duration_ms=%d prompt_tokens=%s completion_tokens=%s",
-        model,
+        rec.get("model"),
         status,
-        (time.monotonic() - started) * 1000,
-        int(prompt[-1]) if prompt else "-",
-        int(completion[-1]) if completion else "-",
+        duration_ms,
+        prompt_tokens if prompt_tokens is not None else "-",
+        completion_tokens if completion_tokens is not None else "-",
+    )
+    if sink is None:
+        return
+    sink.log(
+        {
+            "endpoint": rec["endpoint"],
+            "model": rec.get("model"),
+            "status": status,
+            "duration_ms": duration_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "error": None,
+            "request": clip(json.dumps(rec["request"])) if rec.get("request") is not None else None,
+            "response": clip(payload.decode("utf-8", "replace")) if payload else None,
+        }
+    )
+
+
+def _record_error(request: Request, status: int, error: str) -> None:
+    rec = getattr(request.state, "dblog", None)
+    model = rec.get("model") if rec else None
+    log.warning("model=%s status=%s error=%s", model, status, error)
+    sink = getattr(request.app.state, "db_sink", None)
+    if sink is None:
+        return
+    sink.log(
+        {
+            "endpoint": rec["endpoint"] if rec else request.url.path,
+            "model": model,
+            "status": status,
+            "duration_ms": int((time.monotonic() - rec["started"]) * 1000) if rec else None,
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "error": error,
+            "request": clip(json.dumps(rec["request"]))
+            if rec and rec.get("request") is not None
+            else None,
+            "response": None,
+        }
     )
