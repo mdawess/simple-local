@@ -1,0 +1,41 @@
+# Multimodal embeddings (Qwen3-VL-Embedding-2B) for GPU hosts.
+#
+#   az acr build --registry <acr> --platform linux/amd64 \
+#     -t simple-local-vl:latest -f Dockerfile.vl .
+#
+# No CUDA base image needed: the torch wheels bundle their own CUDA runtime and
+# nothing is compiled at start (unlike vLLM, which needs nvcc). The host driver
+# comes from the platform — Container Apps supplies it for GPU profiles.
+FROM python:3.12-slim
+
+ARG CONFIG=implementations/vl-embeddings/config.container.yml
+ENV CONFIG=${CONFIG} \
+    PATH="/root/.local/bin:${PATH}" \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    HF_HOME=/models \
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    SIMPLE_LOCAL_HOST=0.0.0.0 \
+    SIMPLE_LOCAL_PORT=8080 \
+    VL_DEVICE=cuda \
+    VL_DTYPE=float16
+
+WORKDIR /srv
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh
+
+COPY pyproject.toml uv.lock README.md ./
+COPY simple_local ./simple_local
+RUN uv sync --frozen --no-dev --extra vl
+
+COPY implementations ./implementations
+
+ARG PREFETCH=1
+RUN if [ "$PREFETCH" = "1" ]; then uv run --extra vl python implementations/vl-embeddings/prefetch.py "$CONFIG"; fi
+
+EXPOSE 8080
+
+ENTRYPOINT ["sh", "-c", "exec /srv/.venv/bin/simple-local serve -c \"$CONFIG\""]
