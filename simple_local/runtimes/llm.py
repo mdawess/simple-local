@@ -13,6 +13,23 @@ from ..download import ModelPaths
 log = logging.getLogger("simple_local.llm")
 
 RESTART_BACKOFF_MAX = 30.0
+# What llama.cpp pins n_batch/n_ubatch to when embeddings are enabled and no
+# explicit sizes are given. An embedding input longer than one ubatch has hung
+# and crashed llama-server, so it doubles as the request limit.
+EMBEDDING_DEFAULT_UBATCH = 512
+_UBATCH_FLAGS = {"-ub", "--ubatch-size"}
+
+
+def embedding_token_limit(spec: ModelSpec) -> int:
+    inf = spec.inference
+    if inf.max_input_tokens:
+        return inf.max_input_tokens
+    if inf.ubatch_size:
+        return inf.ubatch_size
+    for flag, value in zip(inf.extra_args, inf.extra_args[1:]):
+        if flag in _UBATCH_FLAGS and value.isdigit():
+            return int(value)
+    return EMBEDDING_DEFAULT_UBATCH
 
 
 def _free_port() -> int:
@@ -35,8 +52,11 @@ def build_llama_args(spec: ModelSpec, paths: ModelPaths, port: int) -> list[str]
     ]
     if spec.embeddings:
         args += ["--embeddings"]
-    if inf.parallel > 1:
-        args += ["--parallel", str(inf.parallel)]
+    if inf.batch_size:
+        args += ["-b", str(inf.batch_size)]
+    if inf.ubatch_size:
+        args += ["-ub", str(inf.ubatch_size)]
+    args += ["--parallel", str(inf.parallel)]
     if inf.mlock:
         args += ["--mlock"]
     if inf.no_mmap:
@@ -62,14 +82,12 @@ def build_llama_args(spec: ModelSpec, paths: ModelPaths, port: int) -> list[str]
 
 
 class LLMRuntime:
-    """Supervises a llama.cpp `llama-server` subprocess on a private port.
+    """
+    Supervises a llama.cpp `llama-server` subprocess on a private port.
 
     The HTTP layer reverse-proxies to `base_url`. A monitor thread restarts the
     subprocess with backoff if it dies; `ready` is cleared while it is down so
     the server can answer 503 instead of proxying into a dead process.
-
-    Adapter ids follow the order adapters are passed on the command line, which
-    is what llama-server's per-request `lora` field addresses them by.
     """
 
     def __init__(self, spec: ModelSpec, paths: ModelPaths):
@@ -78,15 +96,23 @@ class LLMRuntime:
         self.port = _free_port()
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.adapter_ids = {a.name: i for i, a in enumerate(spec.adapters)}
+        self.token_limit = embedding_token_limit(spec) if spec.embeddings else None
         self.ready = threading.Event()
         self._stopped = threading.Event()
         self._proc = self._spawn()
         self._wait_healthy()
         self.ready.set()
+        self._log_slot_context()
         self._log_chat_template()
         threading.Thread(
             target=self._monitor, name=f"llm-monitor-{spec.name}", daemon=True
         ).start()
+
+    def endpoint(self, path: str) -> str:
+        return f"{self.base_url}/v1/{path}"
+
+    def upstream_headers(self) -> dict[str, str]:
+        return {}
 
     def _spawn(self) -> subprocess.Popen:
         return subprocess.Popen(build_llama_args(self.spec, self.paths, self.port))
@@ -109,6 +135,15 @@ class LLMRuntime:
             time.sleep(0.5)
         self._proc.kill()
         raise TimeoutError(f"{self.spec.name}: llama-server did not become healthy in time")
+
+    def _log_slot_context(self) -> None:
+        parallel = self.spec.inference.parallel
+        if parallel > 1:
+            total = self.spec.inference.context_length
+            log.info(
+                "%s: context_length %d is the total across %d slots — %d tokens per request",
+                self.spec.name, total, parallel, total // parallel,
+            )
 
     def _log_chat_template(self) -> None:
         if self.spec.chat_template:
