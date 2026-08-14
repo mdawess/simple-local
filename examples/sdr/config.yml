@@ -1,0 +1,27 @@
+llm:
+  base_url: http://localhost:8081/environments/development/sync/v1
+  api_key: ${SIMPLE_LOCAL_API_KEY}
+  model: Qwen-2.5-3B
+
+identity:
+  company: Acme Analytics
+  agent_name: Alex
+
+voice:
+  enabled: false # Only matters for --dry-run
+
+compliance:
+  require_disclosure: true
+  allow_live_calls: true
+  calling_hours: "00:00-23:59"
+  consented_numbers:
+    - "+12899716341"
+  dnc: []
+
+telephony:
+  provider: twilio
+  twilio:
+    from_number: "+18788778100"
+    stream_url: "wss://industriously-prethyroid-hye.ngrok-free.dev/media"
+
+max_turns: 12

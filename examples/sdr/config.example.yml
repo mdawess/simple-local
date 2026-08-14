@@ -1,0 +1,37 @@
+# AI SDR example config. Copy to config.yml and load with Settings.load("config.yml").
+# Defaults live in settings.py; anything here overrides them.
+
+llm:
+  base_url: http://localhost:8081/environments/development/sync/v1
+  api_key: ${SIMPLE_LOCAL_API_KEY}
+  model: Qwen-2.5-3B
+
+identity:
+  company: Acme Analytics
+  agent_name: Alex
+
+voice:
+  enabled: false # true = speak/listen locally via piper (TTS) + whisper.cpp (STT)
+  tts_model: en_US-lessac-medium.onnx
+  stt_model: ggml-base.en.bin
+
+# Compliance guardrails. Automated AI-voice calls are regulated (US TCPA + the
+# FCC's 2024 AI-voice ruling, state laws, DNC). Keep disclosure on; only enable
+# live calls for numbers you have consent to call.
+compliance:
+  require_disclosure: true
+  allow_live_calls: false
+  calling_hours: "09:00-20:00"
+  consented_numbers:
+    - "+12899716341" # your own cell — the only number a live test may dial
+  dnc: []
+
+telephony:
+  provider: simulated # simulated | twilio
+  # Credentials (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN) are read from the root
+  # .env, not here. Fill these two in and set provider: twilio to go live.
+  twilio:
+    from_number: "+1..." # your purchased Twilio number (caller ID)
+    stream_url: "wss://<your-ngrok-host>/media" # ngrok URL -> ws_port below
+
+max_turns: 12
