@@ -4,6 +4,7 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -16,7 +17,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import config as config_mod
 from .config import Config
 from .dblog import MySQLLogSink, clip
-from .registry import REBUILD_LOCK, ChatTarget, ModelEntry, Registry, build_entry
+from .registry import (
+    REBUILD_LOCK,
+    ChatTarget,
+    ModelEntry,
+    Registry,
+    build_entry,
+    build_registry,
+)
 
 log = logging.getLogger("simple_local.requests")
 
@@ -26,6 +34,49 @@ LEGACY_BASE = "/environments/{env}/sync/v1"
 # in the final chunk's timings (prompt_n / predicted_n) instead.
 _PROMPT_TOKENS = re.compile(rb'"(?:prompt_tokens|prompt_n)"\s*:\s*(\d+)')
 _COMPLETION_TOKENS = re.compile(rb'"(?:completion_tokens|predicted_n)"\s*:\s*(\d+)')
+
+
+def serve(
+    config: "str | Path | Config",
+    *,
+    host: str | None = None,
+    port: int | None = None,
+    watch: bool = False,
+    log_level: str = "info",
+    **uvicorn_options,
+) -> None:
+    """Build the app and run it where the config says, blocking until stopped.
+
+    `create_app` returns an ASGI app and nothing more — an app cannot bind a
+    socket, so `server.host` and `server.port` mean nothing until something
+    reads them. This is what reads them; passing `uvicorn.run(app)` yourself
+    gets uvicorn's defaults instead, which is rarely what the config intended.
+    """
+    import uvicorn
+
+    from .reload import ReloadWatcher
+
+    path = None if isinstance(config, Config) else str(config)
+    cfg = config if isinstance(config, Config) else config_mod.load(path)
+    app = create_app(cfg, build_registry(cfg), config_path=path)
+
+    watcher = None
+    if watch:
+        if path is None:
+            raise ValueError("watch needs a config path to poll, not an already-loaded Config")
+        watcher = ReloadWatcher(app, path)
+        watcher.start()
+    try:
+        uvicorn.run(
+            app,
+            host=host or cfg.server.host,
+            port=port or cfg.server.port,
+            log_level=log_level,
+            **uvicorn_options,
+        )
+    finally:
+        if watcher:
+            watcher.stop()
 
 
 def create_app(cfg: Config, registry: Registry, config_path: str | None = None) -> FastAPI:

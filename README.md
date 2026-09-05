@@ -55,14 +55,42 @@ rather drive it yourself. Asking for the wrong one tells you which you have:
 call predict() instead of asking for an endpoint
 ```
 
-**Serve them over HTTP, or mount into an app you already have.** `create_app`
-returns a FastAPI app:
+**Serve them over HTTP.** `serve` reads `server.host` and `server.port` from the
+config and blocks until stopped:
+
+```python
+from simple_local import serve
+
+serve("config.yml")                      # binds where the config says
+serve("config.yml", watch=True)          # hot-reload on config or artifact changes
+serve("config.yml", host="0.0.0.0", port=9000)   # arguments win
+```
+
+Use `create_app` when you want the ASGI app itself — to mount it, or to run it
+under your own server:
 
 ```python
 from simple_local import build_registry, create_app, load
 
 config = load("config.yml")
 app = create_app(config, build_registry(config))
+```
+
+Two things to know if you take that route. An ASGI app cannot bind a socket, so
+`server.host` and `server.port` mean nothing until something reads them —
+`uvicorn.run(app)` uses uvicorn's defaults (`127.0.0.1:8000`), not yours. And
+teardown lives in the app's lifespan, so whatever runs it must run lifespan or
+the llama-server subprocesses outlive the process. Starlette does **not**
+propagate lifespan to a sub-app mounted with `app.mount()`; chain it in your
+parent app's lifespan, or call `registry.stop_all()` yourself.
+
+Auth comes from `server.api_key`, which is read when the app is built — set it
+before `create_app`, either by exporting the variable the config interpolates or
+on the loaded object:
+
+```python
+config = load("config.yml")
+config.server.api_key = "..."     # empty disables auth entirely
 ```
 
 Everything past the config layer resolves on first use, so importing

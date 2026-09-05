@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import sys
@@ -6,6 +7,9 @@ from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+log = logging.getLogger("simple_local.config")
 
 
 class Block(BaseModel):
@@ -235,7 +239,14 @@ class Server(Block):
     def _blank_falls_back_to_default(cls, data):
         if not isinstance(data, dict):
             return data
-        return {k: v for k, v in data.items() if not (k in ("host", "port") and v in (None, ""))}
+        blank = [k for k in ("host", "port") if k in data and data[k] in (None, "")]
+        for key in blank:
+            # Silently binding somewhere other than the config says is a bad way
+            # to find out an environment variable was never set.
+            log.warning(
+                "server.%s expanded to nothing — an unset ${VAR}? using the default", key
+            )
+        return {k: v for k, v in data.items() if k not in blank}
 
 
 class Config(BaseModel):

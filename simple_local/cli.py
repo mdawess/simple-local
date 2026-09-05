@@ -4,13 +4,9 @@ import logging
 import sys
 from pathlib import Path
 
-import uvicorn
-
 from . import config as config_mod
 from .download import prefetch
-from .registry import build_registry
-from .reload import ReloadWatcher
-from .server import create_app
+from .server import serve
 
 # simple_local.deploy is imported lazily, per command. A serving replica has no
 # business loading the code that creates and deletes cloud resources, and an
@@ -29,16 +25,9 @@ def _deploy():
 
 def _serve(args) -> None:
     cfg = config_mod.load(args.config)
-    registry = build_registry(cfg)
-    app = create_app(cfg, registry, config_path=args.config)
 
     if not cfg.server.api_key:
         print("note: server.api_key not set — auth disabled", file=sys.stderr)
-
-    watcher = None
-    if args.watch:
-        watcher = ReloadWatcher(app, args.config)
-        watcher.start()
 
     base = f"http://{cfg.server.host}:{cfg.server.port}/v1"
     print(f"Serving {len(cfg.served_names())} model(s) at {base}:")
@@ -50,12 +39,7 @@ def _serve(args) -> None:
         print(f"  {spec.name} ({spec.kind})  {base}/{endpoint}")
         for adapter in spec.adapters:
             print(f"  {adapter.name} (adapter of {spec.name}, scale {adapter.scale})")
-    try:
-        uvicorn.run(app, host=cfg.server.host, port=cfg.server.port, log_level="info")
-    finally:
-        if watcher:
-            watcher.stop()
-        app.state.registry.stop_all()
+    serve(args.config, watch=args.watch)
 
 
 def _download(args) -> None:

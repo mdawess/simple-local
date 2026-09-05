@@ -90,3 +90,52 @@ def test_close_stops_the_runtimes():
     models = Models.from_config(CUSTOM_CONFIG)
     models.close()
     assert models.registry.entries  # entries remain readable; runtimes are stopped
+
+
+def test_serve_is_what_reads_host_and_port(monkeypatch):
+    # create_app returns an ASGI app, which cannot bind — so uvicorn.run(app)
+    # silently uses uvicorn's own defaults instead of the config's.
+    import simple_local.server as server
+
+    captured = {}
+    monkeypatch.setattr(server.uvicorn if hasattr(server, "uvicorn") else server,
+                        "uvicorn", None, raising=False)
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: captured.update(kw))
+    server.serve(REPO / "examples/custom/config.yml")
+    assert (captured["host"], captured["port"]) == ("localhost", 8081)
+
+
+def test_serve_arguments_override_the_config(monkeypatch):
+    import uvicorn
+
+    import simple_local.server as server
+
+    captured = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: captured.update(kw))
+    server.serve(REPO / "examples/custom/config.yml", host="0.0.0.0", port=9999)
+    assert (captured["host"], captured["port"]) == ("0.0.0.0", 9999)
+
+
+def test_watching_needs_a_path_not_a_loaded_config():
+    import simple_local.server as server
+
+    config = simple_local.load(str(REPO / "examples/custom/config.yml"))
+    with pytest.raises(ValueError, match="needs a config path"):
+        server.serve(config, watch=True)
+
+
+def test_a_blank_env_var_warns_before_falling_back(caplog):
+    # Binding somewhere other than the config says is a bad way to discover an
+    # unset variable.
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="simple_local.config"):
+        config = simple_local.Config.model_validate(
+            {"models": [{"name": "m", "kind": "remote", "remote": {"url": "http://x"}}],
+             "server": {"host": "", "port": ""}}
+        )
+    assert config.server.host == "localhost" and config.server.port == 8081
+    assert "expanded to nothing" in caplog.text

@@ -39,6 +39,7 @@ _LAZY = {
     "build_registry": (".registry", "build_registry"),
     "build_entry": (".registry", "build_entry"),
     "create_app": (".server", "create_app"),
+    "serve": (".server", "serve"),
     "ensure_model_files": (".download", "ensure_model_files"),
     "prefetch": (".download", "prefetch"),
     "ReloadWatcher": (".reload", "ReloadWatcher"),
@@ -49,7 +50,7 @@ if TYPE_CHECKING:  # so editors and type checkers still see the real symbols
     from .models import Models
     from .registry import ModelEntry, Registry, build_entry, build_registry
     from .reload import ReloadWatcher
-    from .server import create_app
+    from .server import create_app, serve
 
 
 def __getattr__(name: str):
@@ -82,4 +83,5 @@ __all__ = [
     "ensure_model_files",
     "load",
     "prefetch",
+    "serve",
 ]
