@@ -4,10 +4,9 @@ A small local inference server for small models, CPU-friendly. Once llama.cpp is
 model can by served via the yml config. Also supports traditional ml models (e.g. regression, classification)
 and remote runtimes (e.g. Modal or Azure).
 
-Model artifacts can come from Hugging Face, local files, or S3 (no Azure blob yet) including a versioned S3 layout (`{prefix}/{version}/…`) with `version: latest`, an explicit version, or `active` resolved through a `{prefix}/active.json` pointer for deploy-free rollbacks. `POST /v1/reload` (optionally `{"model": "name"}`)
-re-resolves sources and swaps models blue/green without a restart.
+Model artifacts can come from Hugging Face, local files, or S3 (no Azure blob yet) including a versioned S3 layout (`{prefix}/{version}/…`) with `version: latest`, an explicit version, or `active` resolved through a `{prefix}/active.json` pointer for deploy-free rollbacks. `POST /v1/reload` (optionally `{"model": "name"}`). Re-resolves sources and swaps models blue/green without a restart.
 
-## Use it from another project
+## CLI usage
 
 `simple-local` is a package as well as a CLI. Add it from a path or a git ref:
 
@@ -22,7 +21,7 @@ simple-local = { git = "ssh://git@github.com/mdawess/simple-local", tag = "v0.2.
 
 Three levels, depending on how much you want it to do.
 
-**Read and validate a config.** Cheap — this pulls only pyyaml and pydantic:
+**Read and validate a config.**
 
 ```python
 from simple_local import load
