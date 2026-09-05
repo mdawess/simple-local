@@ -70,6 +70,20 @@ class Inference(Block):
     llama_server_path: str = "llama-server"  # binary on PATH, or absolute path
 
 
+class VLLM(Block):
+    model: str | None = None  # HF repo id; defaults to the downloaded source
+    executable: str = "vllm"
+    max_model_len: int | None = None
+    max_num_seqs: int | None = None  # concurrent sequences, vLLM's parallel
+    gpu_memory_utilization: float = 0.90  # fraction of VRAM vLLM preallocates
+    tensor_parallel_size: int = 1  # GPUs per replica
+    dtype: str | None = None  # T4 has no bfloat16 — use float16 there
+    # An embedding is a pooled reduction over token states, so a runtime that
+    # pools differently produces different vectors from the same weights.
+    pooling: str | None = None
+    extra_args: list[str] = []
+
+
 class Feature(BaseModel):
     name: str
     type: Literal["float", "int", "bool", "str"] = "float"
@@ -111,7 +125,7 @@ class Remote(Block):
 
 class ModelSpec(BaseModel):
     name: str
-    kind: Literal["llm", "predictor", "custom", "remote"] = "llm"
+    kind: Literal["llm", "vllm", "predictor", "custom", "remote"] = "llm"
     source: Source | None = None
     runtime: str | None = None  # custom: "module:Class" or "path/to/file.py:Class"
     config: dict = {}  # custom: opaque passthrough to the runtime's load()
@@ -122,6 +136,7 @@ class ModelSpec(BaseModel):
     adapters: list[Adapter] = []
     inference: Inference = Inference()
     predictor: Predictor = Predictor()
+    vllm: VLLM = VLLM()
 
     @model_validator(mode="before")
     @classmethod
@@ -148,9 +163,13 @@ class ModelSpec(BaseModel):
             raise ValueError(f"model '{self.name}': a remote: block is required for kind: remote")
         if self.kind != "remote" and self.remote is not None:
             raise ValueError(f"model '{self.name}': remote: is only supported for kind: remote")
-        if self.kind not in ("llm", "remote") and self.embeddings:
+        if self.kind not in ("llm", "vllm", "remote") and self.embeddings:
             raise ValueError(
-                f"model '{self.name}': embeddings is only supported for kind: llm or remote"
+                f"model '{self.name}': embeddings is only supported for kind: llm, vllm or remote"
+            )
+        if self.kind == "vllm" and not (self.vllm.model or self.source):
+            raise ValueError(
+                f"model '{self.name}': kind: vllm needs vllm.model or a source to download"
             )
         if self.kind != "llm" and self.adapters:
             raise ValueError(f"model '{self.name}': adapters are only supported for kind: llm")
@@ -207,6 +226,17 @@ class Server(Block):
     def _none_to_empty(cls, v):
         return v or ""
 
+    # A container config writes ${SIMPLE_LOCAL_HOST} and ${SIMPLE_LOCAL_PORT}
+    # because the image supplies them. Reading that same config outside the
+    # image — to validate it, or to work out what base image it needs — must
+    # not fail just because they expand to nothing.
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_falls_back_to_default(cls, data):
+        if not isinstance(data, dict):
+            return data
+        return {k: v for k, v in data.items() if not (k in ("host", "port") and v in (None, ""))}
+
 
 class Config(BaseModel):
     models: list[ModelSpec] = Field(min_length=1)
@@ -254,7 +284,45 @@ def _upgrade_legacy(data: dict) -> dict:
     return upgraded
 
 
+def _anchor(value: str, base: Path) -> str:
+    candidate = Path(value).expanduser()
+    return value if candidate.is_absolute() else str((base / candidate).resolve())
+
+
+def _anchor_source(source, base: Path) -> None:
+    if isinstance(source, dict) and source.get("provider") == "local" and source.get("file"):
+        source["file"] = _anchor(source["file"], base)
+
+
+def _anchor_runtime(ref: str, base: Path) -> str:
+    module_ref, sep, class_name = ref.rpartition(":")
+    if not sep or not (module_ref.endswith(".py") or "/" in module_ref):
+        return ref
+    return f"{_anchor(module_ref, base)}:{class_name}"
+
+
+def _anchor_paths(data: dict, base: Path) -> dict:
+    """Paths in a config are relative to that config, so a model directory can be
+    copied into an image (or moved anywhere) without rewriting what it points at."""
+    for model in data.get("models") or []:
+        if not isinstance(model, dict):
+            continue
+        if model.get("runtime"):
+            model["runtime"] = _anchor_runtime(model["runtime"], base)
+        if model.get("chat_template_file"):
+            model["chat_template_file"] = _anchor(model["chat_template_file"], base)
+        _anchor_source(model.get("source"), base)
+        for adapter in model.get("adapters") or []:
+            if isinstance(adapter, dict):
+                _anchor_source(adapter.get("source"), base)
+        draft = (model.get("inference") or {}).get("draft")
+        if isinstance(draft, dict):
+            _anchor_source(draft.get("source"), base)
+    return data
+
+
 def load(path: str) -> Config:
-    raw = Path(path).read_text()
-    data = yaml.safe_load(_expand_env(raw))
-    return Config.model_validate(_upgrade_legacy(data))
+    config_path = Path(path)
+    data = yaml.safe_load(_expand_env(config_path.read_text()))
+    upgraded = _upgrade_legacy(data)
+    return Config.model_validate(_anchor_paths(upgraded, config_path.parent))

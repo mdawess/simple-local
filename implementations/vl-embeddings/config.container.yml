@@ -1,7 +1,7 @@
 models:
   - name: Qwen3-VL-Embedding-2B
     kind: custom
-    runtime: implementations/vl-embeddings/runtime.py:VLEmbedder
+    runtime: runtime.py:VLEmbedder
     config:
       model: Qwen/Qwen3-VL-Embedding-2B
       dtype: ${VL_DTYPE}

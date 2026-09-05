@@ -8,6 +8,17 @@ from simple_local.download import ModelPaths
 from simple_local.registry import ModelEntry, Registry, artifact_signature
 
 
+class FakeSink:
+    def __init__(self):
+        self.records = []
+
+    def log(self, record):
+        self.records.append(record)
+
+    def stop(self):
+        pass
+
+
 class FakeLLM:
     def __init__(self, adapters=(), base_url="http://upstream"):
         self.base_url = base_url
@@ -15,6 +26,12 @@ class FakeLLM:
         self.ready = threading.Event()
         self.ready.set()
         self.stopped = False
+
+    def endpoint(self, path):
+        return f"{self.base_url}/v1/{path}"
+
+    def upstream_headers(self):
+        return {}
 
     def stop(self):
         self.stopped = True
@@ -53,7 +70,9 @@ def registry_factory(tmp_path):
 def make_config(*specs, api_key="") -> Config:
     return Config.model_validate(
         {
-            "models": [s.model_dump(by_alias=True) for s in specs],
+            # exclude_defaults so a dumped spec looks like a hand-written config:
+            # blocks the author never wrote stay absent.
+            "models": [s.model_dump(by_alias=True, exclude_defaults=True) for s in specs],
             "server": {"api_key": api_key},
         }
     )

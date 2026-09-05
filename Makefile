@@ -1,9 +1,10 @@
-.PHONY: help setup serve run mem mysql mysql-down mysql-shell mysql-tail
+.PHONY: help setup serve run validate render plan apply deploy revisions promote rollback domain cost stop start teardown list mem mysql mysql-down mysql-shell mysql-tail
 
 EXAMPLE ?= chat
 ARGS ?=
 CONFIG ?= config.yml
 WATCH ?=
+HASH ?=
 
 help:
 	@echo "make setup                                                install python env, runtimes, and models"
@@ -13,6 +14,21 @@ help:
 	@echo "make serve CONFIG=... WATCH=--watch                       hot-reload the model on config/file changes"
 	@echo "make run EXAMPLE=chat                                     run from implementations/ or examples/"
 	@echo "make run EXAMPLE=sdr ARGS=--dry-run                       pass args through to the example"
+	@echo "make validate CONFIG=...                                  check a config against Azure's limits, without Azure"
+	@echo "make render CONFIG=...                                    print the Dockerfile generated for this config"
+	@echo "make plan CONFIG=...                                      diff the config against the live deployment"
+	@echo "make apply CONFIG=... HASH=...                            run the plan that HASH was approved for"
+	@echo "make deploy CONFIG=...                                    plan and apply in one step, print the URL"
+	@echo "make deploy CONFIG=... ARGS=--rebuild                     force an image rebuild"
+	@echo "make stop CONFIG=...                                      deactivate the revision, keep the deployment"
+	@echo "make start CONFIG=...                                     undo stop, no rebuild"
+	@echo "make teardown CONFIG=...                                  delete the deployment"
+	@echo "make list                                                 every deployment and its URL"
+	@echo "make revisions CONFIG=...                                 revisions, labels and traffic weights"
+	@echo "make promote CONFIG=...                                   make the candidate revision live"
+	@echo "make rollback CONFIG=...                                  swap the live label back"
+	@echo "make domain CONFIG=...                                    custom domain state and DNS records"
+	@echo "make cost CONFIG=...                                      estimated monthly cost"
 	@echo "make mem                                                  ram/swap and per-model memory usage"
 	@echo "make mysql-tail CONFIG=...                                last 20 logged requests (needs logging.mysql)"
 	@echo "make mysql-shell CONFIG=...                               sql prompt on the request log"
@@ -26,6 +42,45 @@ serve: mysql
 
 run:
 	@./scripts/run.sh $(EXAMPLE) $(ARGS)
+
+validate:
+	@uv run simple-local validate -c $(CONFIG) $(ARGS)
+
+render:
+	@uv run simple-local render -c $(CONFIG) $(ARGS)
+
+plan:
+	@uv run simple-local plan -c $(CONFIG) $(ARGS)
+
+apply deploy:
+	@uv run simple-local apply -c $(CONFIG) $(if $(HASH),--plan-hash $(HASH)) $(ARGS)
+
+revisions:
+	@uv run simple-local revisions -c $(CONFIG) $(ARGS)
+
+promote:
+	@uv run simple-local promote -c $(CONFIG) $(ARGS)
+
+rollback:
+	@uv run simple-local rollback -c $(CONFIG) $(ARGS)
+
+domain:
+	@uv run simple-local domain -c $(CONFIG) $(ARGS)
+
+cost:
+	@uv run simple-local cost -c $(CONFIG) $(ARGS)
+
+stop:
+	@uv run simple-local stop -c $(CONFIG) $(ARGS)
+
+start:
+	@uv run simple-local start -c $(CONFIG) $(ARGS)
+
+teardown:
+	@uv run simple-local teardown -c $(CONFIG) $(ARGS)
+
+list:
+	@uv run simple-local list $(ARGS)
 
 mem:
 	@uv run python scripts/mem.py

@@ -9,6 +9,7 @@ from .runtimes.custom import CustomRuntime
 from .runtimes.llm import LLMRuntime
 from .runtimes.predictor import PredictorRuntime
 from .runtimes.remote import RemoteRuntime
+from .runtimes.vllm import VLLMRuntime
 
 log = logging.getLogger("simple_local.registry")
 
@@ -122,6 +123,8 @@ def build_entry(spec: ModelSpec) -> ModelEntry:
     paths = ensure_model_files(spec)
     if spec.kind == "llm":
         runtime = LLMRuntime(spec, paths)
+    elif spec.kind == "vllm":
+        runtime = VLLMRuntime(spec, paths)
     elif spec.kind == "predictor":
         runtime = PredictorRuntime(spec, paths.model)
     else:

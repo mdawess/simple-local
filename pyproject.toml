@@ -1,8 +1,11 @@
 [project]
 name = "simple-local"
-version = "0.1.0"
-description = "Bare-bones local inference: one YAML config, one endpoint, CPU only"
+version = "0.2.0"
+description = "Bare-bones local inference: one YAML config, one endpoint"
 requires-python = ">=3.10"
+# What a serving replica needs, and nothing else: this is what gets baked into
+# every image, so anything only a client or an example imports belongs in an
+# extra instead.
 dependencies = [
     "fastapi",
     "uvicorn[standard]",
@@ -12,18 +15,20 @@ dependencies = [
     "joblib",
     "scikit-learn",
     "numpy",
-    "requests>=2.34.2",
     "pydantic>=2.13.4",
     "boto3>=1.43.62",
     "pymysql>=1.2.0",
-    "openai>=2.53.0",
-    "modal>=1.5.3",
 ]
 
 [project.scripts]
 simple-local = "simple_local.cli:main"
 
 [project.optional-dependencies]
+# simple_local.deploy adds no third-party dependency of its own — it shells out
+# to the az CLI. The extra exists so the layering is declared rather than
+# remembered, and so a serving image can be built without it.
+deploy = []
+
 vl = [
     "accelerate>=1.14.0",
     "pillow>=12.3.0",
@@ -34,12 +39,26 @@ vl = [
     "transformers>=5.14.1",
 ]
 
+# Clients and examples, never the server. scripts/run.sh installs an example's
+# own deps.txt on top of these.
+examples = [
+    "openai>=2.53.0",
+    "modal>=1.5.3",
+    "pandas>=2.3.3",
+    "requests>=2.34.2",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["simple_local"]
+
+# py.typed ships the annotations; without it a consumer's type checker treats
+# every import from here as Any.
+[tool.hatch.build.targets.wheel.force-include]
+"simple_local/py.typed" = "simple_local/py.typed"
 
 [dependency-groups]
 dev = [

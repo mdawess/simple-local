@@ -38,6 +38,26 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _wait_for_health(proc, base_url: str, name: str, what: str, timeout: float = 180.0) -> None:
+    """Blocks until the subprocess answers /health, or explain why it never did.
+    A process that exits early is a different failure from one that hangs, and
+    the message has to say which."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"{name}: {what} exited early (code {proc.returncode})")
+        try:
+            with urllib.request.urlopen(f"{base_url}/health", timeout=2) as r:
+                if r.status == 200:
+                    log.info("%s: ready on %s", name, base_url)
+                    return
+        except (urllib.error.URLError, ConnectionError, OSError):
+            pass
+        time.sleep(0.5)
+    proc.kill()
+    raise TimeoutError(f"{name}: {what} did not become healthy in {timeout:.0f}s")
+
+
 def build_llama_args(spec: ModelSpec, paths: ModelPaths, port: int) -> list[str]:
     inf = spec.inference
     args = [
@@ -118,23 +138,10 @@ class LLMRuntime:
         return subprocess.Popen(build_llama_args(self.spec, self.paths, self.port))
 
     def _wait_healthy(self, timeout: float = 180.0) -> None:
-        deadline = time.monotonic() + timeout
         log.info("%s: loading model %s", self.spec.name, self.paths.model.name)
-        while time.monotonic() < deadline:
-            if self._proc.poll() is not None:
-                raise RuntimeError(
-                    f"{self.spec.name}: llama-server exited early (code {self._proc.returncode})"
-                )
-            try:
-                with urllib.request.urlopen(f"{self.base_url}/health", timeout=2) as r:
-                    if r.status == 200:
-                        log.info("%s: ready on %s", self.spec.name, self.base_url)
-                        return
-            except (urllib.error.URLError, ConnectionError, OSError):
-                pass
-            time.sleep(0.5)
-        self._proc.kill()
-        raise TimeoutError(f"{self.spec.name}: llama-server did not become healthy in time")
+        _wait_for_health(
+            self._proc, self.base_url, self.spec.name, "llama-server", timeout=timeout
+        )
 
     def _log_slot_context(self) -> None:
         parallel = self.spec.inference.parallel

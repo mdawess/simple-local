@@ -7,10 +7,19 @@ models:
       repo: Qwen/Qwen3-Embedding-0.6B-GGUF
       file: Qwen3-Embedding-0.6B-Q8_0.gguf
     inference:
-      batch_size: 8192
-      ubatch_size: 8192
-      max_input_tokens: 8192
-      parallel: 4
+      # Sized to the 8GiB ceiling of a Consumption replica, which is a hard cap
+      # (4 vCPU forces 8GiB). The KV cache is preallocated at roughly 112KiB per
+      # token of total context, so context_length 32768 costs ~3.5GiB and leaves
+      # room for the compute buffer. 65536 fits the cache but not the buffer:
+      # the server loads fine and then dies on any input past ~2000 tokens.
+      #
+      # context_length is the total across slots, so 8 slots means 4096 tokens
+      # per request. ubatch has to cover a whole input or embedding requests
+      # hang, so it moves with max_input_tokens.
+      batch_size: 4096
+      ubatch_size: 4096
+      max_input_tokens: 4096
+      parallel: 8
       context_length: 32768
       extra_args: ["--pooling", "last"]
 

@@ -4,9 +4,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import boto3
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 
-from .config import ModelSpec, Source
+from .config import Config, ModelSpec, Source
+
+_HF_REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 
 
 def _models_dir() -> Path:
@@ -115,6 +117,30 @@ def _sole_file(path: Path, pattern: str, what: str) -> Path:
             f"{what}: expected exactly one {pattern} file in {path}, found {len(matches)}"
         )
     return matches[0]
+
+
+def snapshot_custom_model(spec: ModelSpec) -> str | None:
+    """Some kinds name their weights by repo id rather than through a `source:`
+    — a custom runtime in its opaque `config:` block, vLLM in `vllm.model`. Both
+    have to be cached at build time or the download lands on the cold start.
+    Anything that is not a bare HF repo id is left alone."""
+    if spec.kind == "custom":
+        model = spec.config.get("model")
+    elif spec.kind == "vllm":
+        model = spec.vllm.model
+    else:
+        return None
+    if not model or not _HF_REPO.match(str(model)):
+        return None
+    print(f"Caching {model}")
+    snapshot_download(str(model))
+    return str(model)
+
+
+def prefetch(cfg: Config) -> None:
+    for spec in cfg.models:
+        ensure_model_files(spec)
+        snapshot_custom_model(spec)
 
 
 def ensure_model_files(spec: ModelSpec) -> ModelPaths:

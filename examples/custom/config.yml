@@ -1,7 +1,7 @@
 models:
   - name: cost-ensemble
     kind: custom
-    runtime: examples/custom/runtime.py:DemoEnsemble
+    runtime: runtime.py:DemoEnsemble
     # No source: this demo has no artifact. A real one would pull its fitted
     # estimators from a versioned S3 prefix:
     # source:

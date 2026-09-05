@@ -1,7 +1,7 @@
 models:
   - name: Qwen3-VL-Embedding-2B
     kind: custom
-    runtime: implementations/vl-embeddings/runtime.py:VLEmbedder
+    runtime: runtime.py:VLEmbedder
     config:
       model: Qwen/Qwen3-VL-Embedding-2B
       dtype: bfloat16
@@ -11,6 +11,33 @@ models:
       # prompt: "Retrieve relevant documents for the query."
 
 server:
-  host: ${TAILSCAL_HOST_IP:-localhost}
+  host: 100.90.191.68
   port: 8084
   api_key: ${SIMPLE_LOCAL_API_KEY}
+
+# Read by simple-local plan/apply; ignored when serving locally
+deploy:
+  # The app name is the public hostname — it names the route, not the model.
+  name: image-embed
+  domain:
+    zone: model.aeriumhq.com
+    # Azure issues and renews the certificate. Costs two DNS records per app,
+    # but needs no NS delegation — which Hostinger does not support.
+    certificate: managed
+  gpu: NC8as-T4
+  # No CUDA base image needed: the torch wheels bundle their own runtime and
+  # nothing is compiled at start. The host driver comes from the platform.
+  build:
+    system_packages: [build-essential]
+    extras: [vl]
+  # Azure exposes no quota API for Container Apps, and past the limit it refuses
+  # the pod while the app keeps reporting healthy — so it is recorded here.
+  quotas:
+    Consumption-GPU-NC8as-T4: 2
+  cpu: 4.0
+  memory: 16.0Gi # ~100ms p50 latency, can increase to reduce
+  min_replicas: 1 # Keep it warm to avoid cold starts
+  max_replicas: 4 # Not yet reachable ceiling with current quotas
+  env:
+    VL_DEVICE: cuda
+    VL_DTYPE: float16

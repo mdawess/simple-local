@@ -39,9 +39,24 @@ models:
   #     cache_type_v: q8_0
 
 server:
-  host: ${TAILSCAL_HOST_IP:-localhost}
+  host: 100.90.191.68
   port: 8083
   api_key: ${SIMPLE_LOCAL_API_KEY}
+
+# Read by simple-local plan/apply; ignored when serving locally
+deploy:
+  # The app name is the public hostname, so it names the route rather than the
+  # model behind it: swapping models is a config change, not a URL change.
+  name: text-embed
+  domain:
+    zone: model.aeriumhq.com
+    # Azure issues and renews the certificate. Costs two DNS records per app,
+    # but needs no NS delegation — which Hostinger does not support.
+    certificate: managed
+  cpu: 4.0
+  memory: 8.0Gi
+  min_replicas: 1
+  max_replicas: 4
 
 logging:
   mysql:

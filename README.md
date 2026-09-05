@@ -7,6 +7,71 @@ and remote runtimes (e.g. Modal or Azure).
 Model artifacts can come from Hugging Face, local files, or S3 (no Azure blob yet) including a versioned S3 layout (`{prefix}/{version}/…`) with `version: latest`, an explicit version, or `active` resolved through a `{prefix}/active.json` pointer for deploy-free rollbacks. `POST /v1/reload` (optionally `{"model": "name"}`)
 re-resolves sources and swaps models blue/green without a restart.
 
+## Use it from another project
+
+`simple-local` is a package as well as a CLI. Add it from a path or a git ref:
+
+```toml
+# pyproject.toml
+dependencies = ["simple-local"]
+
+[tool.uv.sources]
+simple-local = { git = "ssh://git@github.com/mdawess/simple-local", tag = "v0.2.0" }
+# or, while developing: { path = "../simple-local", editable = true }
+```
+
+Three levels, depending on how much you want it to do.
+
+**Read and validate a config.** Cheap — this pulls only pyyaml and pydantic:
+
+```python
+from simple_local import load
+
+config = load("config.yml")
+print([m.name for m in config.models])
+```
+
+**Load the models here and call them.** For evaluations, batch indexing, or a
+notebook — anything that would otherwise start a server just to call it:
+
+```python
+from simple_local import Models
+
+with Models.from_config("config.yml") as models:
+    vectors = models.embed("qwen3-embed", ["a query", "another"])
+    result = models.predict("cost-ensemble", {"kva": 250, "phase": "3ph"})
+```
+
+Loading starts subprocesses and reads weights, so build one `Models` and reuse
+it. The context manager is the reliable way to be sure everything stops.
+
+The two runtime shapes are not hidden, because they perform differently.
+`predictor` and `custom` run in your process, so `predict()` is a direct call.
+`llm` and `vllm` supervise a subprocess speaking HTTP on a private port, so
+those go over localhost — `endpoint(name)` gives you that URL if you would
+rather drive it yourself. Asking for the wrong one tells you which you have:
+
+```
+'cost-ensemble' is kind: custom, which runs in this process —
+call predict() instead of asking for an endpoint
+```
+
+**Serve them over HTTP, or mount into an app you already have.** `create_app`
+returns a FastAPI app:
+
+```python
+from simple_local import build_registry, create_app, load
+
+config = load("config.yml")
+app = create_app(config, build_registry(config))
+```
+
+Everything past the config layer resolves on first use, so importing
+`simple_local` does not pull fastapi, scikit-learn or boto3 unless you reach for
+something that needs them. Extras: `[vl]` for the vision-language runtime,
+`[deploy]` for the Azure tooling, `[examples]` for the client libraries the
+examples use.
+
 ## Credits
 
 Inspired by https://github.com/basetenlabs/truss

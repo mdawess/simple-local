@@ -1,0 +1,17 @@
+# Serve the fine-tuned model produced by finetune.sh.
+#   make serve CONFIG=examples/finetune/config.yml
+kind: llm
+model_name: Qwen-2.5-3B-SDR
+
+source:
+  provider: local
+  file: qwen-sdr-lora.gguf # produced by finetune.sh
+
+inference:
+  context_length: 8192
+  threads: 0
+
+server:
+  host: 127.0.0.1
+  port: 8081
+  api_key: ${SIMPLE_LOCAL_API_KEY}

@@ -1,0 +1,21 @@
+# Serve the trained regression model through simple-local's predictor endpoint.
+# Run from the repo root: uv run simple-local serve -c examples/regression/config.yml
+kind: predictor
+model_name: house-price
+
+source:
+  provider: local
+  file: model.joblib
+
+predictor:
+  task: regression
+  schema:
+    features:
+      - { name: sqft, type: float }
+      - { name: bedrooms, type: int }
+      - { name: age, type: float }
+
+server:
+  host: 127.0.0.1
+  port: 8081
+  api_key: ${SIMPLE_LOCAL_API_KEY}

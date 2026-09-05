@@ -18,7 +18,8 @@ def test_default_args():
     assert ("--alias", "base") in zip(args, args[1:])
     assert ("--port", "9999") in zip(args, args[1:])
     assert "--metrics" in args
-    assert "--parallel" not in args
+    # explicit even at the default, so llama-server doesn't auto-pick 4 slots
+    assert ("--parallel", "1") in zip(args, args[1:])
     assert "--lora" not in args
 
 

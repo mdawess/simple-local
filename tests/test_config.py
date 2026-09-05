@@ -127,6 +127,99 @@ models:
         )
 
 
+def test_commented_out_sections_load(tmp_path):
+    # A section whose keys are all commented out parses as None, not {}.
+    cfg = config_mod.load(
+        write(
+            tmp_path,
+            """
+models:
+  - name: base
+    source: { provider: local, file: m.gguf }
+    inference:
+      # context_length: 8192
+logging:
+  # mysql:
+  #   host: localhost
+server:
+  # port: 9000
+""",
+        )
+    )
+    assert cfg.logging.mysql is None
+    assert cfg.models[0].inference.context_length == 4096
+    assert cfg.server.port == 8081
+
+
+def test_mysql_logging_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("PW", "sekrit")
+    cfg = config_mod.load(
+        write(
+            tmp_path,
+            """
+models:
+  - name: base
+    source: { provider: local, file: m.gguf }
+logging:
+  mysql:
+    host: 127.0.0.1
+    port: 3307
+    password: ${PW}
+""",
+        )
+    )
+    assert (cfg.logging.mysql.host, cfg.logging.mysql.port) == ("127.0.0.1", 3307)
+    assert cfg.logging.mysql.password == "sekrit"
+    assert cfg.logging.mysql.database == "simple_local"
+
+
+def test_mysql_table_must_be_identifier(tmp_path):
+    with pytest.raises(ValidationError, match="plain identifier"):
+        config_mod.load(
+            write(
+                tmp_path,
+                """
+models:
+  - name: base
+    source: { provider: local, file: m.gguf }
+logging:
+  mysql:
+    table: "log; DROP TABLE x"
+""",
+            )
+        )
+
+
+def test_unset_mysql_host_disables_logging(tmp_path, monkeypatch):
+    """One config for every environment: no MYSQL_HOST means no request logging,
+    rather than a connection that retries forever."""
+    monkeypatch.delenv("MYSQL_HOST", raising=False)
+    body = """
+models:
+  - name: base
+    source: { provider: local, file: m.gguf }
+logging:
+  mysql:
+    host: ${MYSQL_HOST}
+    user: ${MYSQL_USER}
+    password: ${MYSQL_PASSWORD}
+    database: ${MYSQL_DATABASE}
+    ssl: true
+"""
+    assert config_mod.load(write(tmp_path, body)).logging.mysql is None
+
+    monkeypatch.setenv("MYSQL_HOST", "db.mysql.database.azure.com")
+    monkeypatch.setenv("MYSQL_USER", "app")
+    monkeypatch.setenv("MYSQL_DATABASE", "simple_local")
+    mysql = config_mod.load(write(tmp_path, body)).logging.mysql
+    assert (mysql.host, mysql.user, mysql.database) == (
+        "db.mysql.database.azure.com",
+        "app",
+        "simple_local",
+    )
+    assert mysql.ssl is True
+
+
 def test_env_expansion(tmp_path, monkeypatch):
     monkeypatch.setenv("TEST_KEY", "sekrit")
     cfg = config_mod.load(

@@ -1,5 +1,5 @@
 models:
-  - name: Qwen3.6-27B
+  - name: Qwen3.8-27B
     kind: remote
     remote:
       url: https://mike-9082--llm.modal.run/v1
@@ -7,7 +7,7 @@ models:
       timeout: 300
 
 server:
-  host: ${TAILSCAL_HOST_IP:-localhost}
+  host: 100.90.191.68
   port: 8085
   api_key: ${SIMPLE_LOCAL_API_KEY}
 

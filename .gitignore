@@ -27,3 +27,9 @@ examples/finetune/*.gguf
 # Contact lists + verification outputs (PII)
 examples/sdr/inputs/*
 !examples/sdr/inputs/.gitkeep
+
+playground/
+
+# Wildcard certificate material — see simple_local/deploy/setup.md
+*.pfx
+letsencrypt/
